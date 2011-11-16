@@ -9,6 +9,7 @@ module Sync.State (
    getFolders,
    updateValidity,
    getUIDMap,
+   getUIDSet,
    setUIDMapping,
    setSeen,
    findReadElsewhere
@@ -23,6 +24,8 @@ import qualified Data.ByteString.Char8 as B8
 
 import qualified Data.Map as Map
 import Data.Map (Map)
+import qualified Data.Set as Set
+import Data.Set (Set)
 
 open :: IO Connection
 open = connectSqlite3 "rs-state.db"
@@ -55,6 +58,13 @@ getUIDMap con validity = do
       [toSql validity]
    let vals = map (\ [a, b] -> (fromSql a, fromSql b)) vals1
    return $ Map.fromList vals
+
+getUIDSet :: Connection -> UID -> IO (Set UID)
+getUIDSet con validity = do
+   vals1 <- quickQuery con "select uid from idmap where validity=?"
+      [toSql validity]
+   let vals = map (\ [a] -> fromSql a) vals1
+   return $ Set.fromList vals
 
 setUIDMapping :: Connection -> Int -> UID -> UID -> String -> Bool -> IO ()
 setUIDMapping con folderKey validity uid mid seen = do

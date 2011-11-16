@@ -9,7 +9,7 @@ import Control.Monad
 import qualified Data.ByteString.Char8 as B8
 import Data.List (groupBy, intercalate, isInfixOf, partition)
 import Data.Maybe (fromJust)
-import qualified Data.Map as Map
+import qualified Data.Set as Set
 import System.IO (hFlush, stdout)
 
 import qualified Sync.State as S
@@ -62,8 +62,8 @@ scanFolder db imap (folderKey, name, startUID) = do
    -- forM_ seens $ \seen ->
    --    putStrLn $ show seen
 
-   uidMap <- S.getUIDMap db validity
-   let (present, missing) = partition (\ (k, _) -> Map.member k uidMap) seens
+   uidSet <- S.getUIDSet db validity
+   let (present, missing) = partition (\ (k, _) -> Set.member k uidSet) seens
    let missingIDs = map fst missing
    let missingSeens = map snd missing
    when (missingIDs /= []) $
