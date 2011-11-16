@@ -59,29 +59,3 @@ setUIDMapping con validity uid mid = do
    1 <- run con "insert or replace into idmap (validity, uid, messageid) values (?,?,?)"
       [toSql validity, toSql uid, toSql mid]
    return ()
-
--- Information about the messages in a folder.
-data Message = Message {
-   messageUid  :: UID,
-   messageId   :: B.ByteString,
-   messageRead :: Bool }
-
-data Folder = Folder {
-   folderName     :: String,
-   folderValidity :: UID,
-   folderMessages :: Map UID Message,
-   folderByMID    :: Map B.ByteString Message }
-
-newtype State = State (Map String Folder)
-
-lookupByID :: String -> UID -> State -> Maybe Message
-lookupByID fname uid (State state) = do
-   folder <- Map.lookup fname state
-   Map.lookup uid $ folderMessages folder
-
-lookupByMID :: String -> B.ByteString -> State -> Maybe Message
-lookupByMID fname mid (State state) = do
-   folder <- Map.lookup fname state
-   Map.lookup mid $ folderByMID folder
-
--- That was interesting, but not what I want.
