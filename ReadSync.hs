@@ -60,7 +60,7 @@ scanFolder db imap (folderKey, name, startUID) = do
    start <- S.getFirstUnread db folderKey
    seens <- fetchSeens imap start
 
-   uidSet <- S.getUIDSet db validity
+   uidSet <- S.getUIDSet db folderKey
    let (present, missing) = partition (\ (k, _) -> Set.member k uidSet) seens
    let missingIDs = map fst missing
    let missingSeens = map snd missing
@@ -69,10 +69,10 @@ scanFolder db imap (folderKey, name, startUID) = do
    mids <- fetchMessageIDs imap missingIDs
 
    -- Write out the new UIDs that we haven't seen before.
-   mapM_ (\ (u, m, s) -> S.setUIDMapping db folderKey validity u m s) $ zip3 missingIDs mids missingSeens
+   mapM_ (\ (u, m, s) -> S.setUIDMapping db folderKey u m s) $ zip3 missingIDs mids missingSeens
 
    -- Update the seen state of the messages we have seen.
-   mapM_ (\ (u, s) -> S.setSeen db validity u s) present
+   mapM_ (\ (u, s) -> S.setSeen db folderKey u s) present
 
    close imap
 

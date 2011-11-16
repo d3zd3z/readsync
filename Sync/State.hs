@@ -46,38 +46,38 @@ getFolders con = do
 
 updateValidity :: Connection -> String -> UID -> IO ()
 updateValidity con name validity = do
-   [[oldValidity]] <- quickQuery con "select validity from folders where name=?"
+   [[oldValidity, key]] <- quickQuery con "select validity, key from folders where name=?"
       [toSql name]
    1 <- run con "update folders set validity=? where name=?"
       [toSql validity, toSql name]
-   _ <- run con "delete from idmap where validity=?" [oldValidity]
+   _ <- run con "delete from idmap where folderKey=?" [key]
    return ()
 
-getUIDMap :: Connection -> UID -> IO (Map UID String)
-getUIDMap con validity = do
-   vals1 <- quickQuery con "select uid, messageid from idmap where validity=?"
-      [toSql validity]
+getUIDMap :: Connection -> Int -> IO (Map UID String)
+getUIDMap con folderKey = do
+   vals1 <- quickQuery con "select uid, messageid from idmap where folderKey=?"
+      [toSql folderKey]
    let vals = map (\ [a, b] -> (fromSql a, fromSql b)) vals1
    return $ Map.fromList vals
 
-getUIDSet :: Connection -> UID -> IO (Set UID)
-getUIDSet con validity = do
-   vals1 <- quickQuery con "select uid from idmap where validity=?"
-      [toSql validity]
+getUIDSet :: Connection -> Int -> IO (Set UID)
+getUIDSet con folderKey = do
+   vals1 <- quickQuery con "select uid from idmap where folderKey=?"
+      [toSql folderKey]
    let vals = map (\ [a] -> fromSql a) vals1
    return $ Set.fromList vals
 
-setUIDMapping :: Connection -> Int -> UID -> UID -> String -> Bool -> IO ()
-setUIDMapping con folderKey validity uid mid seen = do
-   1 <- run con "insert or replace into idmap (folderkey, validity, uid, messageid, seen) values (?,?,?,?,?)"
-      [toSql folderKey, toSql validity, toSql uid, toSql mid, boolToSql seen]
+setUIDMapping :: Connection -> Int -> UID -> String -> Bool -> IO ()
+setUIDMapping con folderKey uid mid seen = do
+   1 <- run con "insert or replace into idmap (folderkey, uid, messageid, seen) values (?,?,?,?)"
+      [toSql folderKey, toSql uid, toSql mid, boolToSql seen]
    return ()
 
 -- Set the seen value for a row that is present.
-setSeen :: Connection -> UID -> UID -> Bool -> IO ()
-setSeen con validity uid seen = do
-   1 <- run con "update idmap set seen=? where validity=? and uid=?"
-      [boolToSql seen, toSql validity, toSql uid]
+setSeen :: Connection -> Int -> UID -> Bool -> IO ()
+setSeen con folderKey uid seen = do
+   1 <- run con "update idmap set seen=? where folderKey=? and uid=?"
+      [boolToSql seen, toSql folderKey, toSql uid]
    return ()
 
 boolToSql :: Bool -> SqlValue
@@ -111,7 +111,7 @@ findReadElsewhere con = do
                \   on aa.messageid == bb.messageid \
                \ inner join folders \
                \   on folders.key == aa.folderKey \
-               \ where aa.validity != bb.validity \
+               \ where aa.folderKey != bb.folderKey \
                \   and aa.seen = 0 and bb.seen = 1 \
                \ order by aa.folderKey, aa.uid" []
    return $ map (\ [a, b] -> (fromSql a, fromSql b)) result
