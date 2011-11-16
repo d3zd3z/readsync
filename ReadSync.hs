@@ -57,7 +57,8 @@ scanFolder db imap (folderKey, name, startUID) = do
       S.updateValidity db name validity
 
    -- Get all of the flags.
-   seens <- fetchSeens imap
+   start <- S.getFirstUnread db folderKey
+   seens <- fetchSeens imap start
 
    uidSet <- S.getUIDSet db validity
    let (present, missing) = partition (\ (k, _) -> Set.member k uidSet) seens
@@ -76,11 +77,11 @@ scanFolder db imap (folderKey, name, startUID) = do
    close imap
 
 -- Fetch all of the messages and seen flags.
-fetchSeens :: BSStream s => IMAPConnection s -> IO [(UID, Bool)]
-fetchSeens imap = do
+fetchSeens :: BSStream s => IMAPConnection s -> UID -> IO [(UID, Bool)]
+fetchSeens imap firstUnread = do
    lastUid <- uidNext imap
 
-   flagGroups <- forM (chopList 1000 [1 .. lastUid-1]) $ \group -> do
+   flagGroups <- forM (chopList 1000 [firstUnread .. lastUid-1]) $ \group -> do
       let query = intercalate "," $ groupUIDs group
       flags <- fetchByStringT imap query "(UID FLAGS)"
       return $ map (\ (a, b) -> (a, decodeSeen b)) flags

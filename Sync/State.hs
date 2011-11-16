@@ -12,7 +12,8 @@ module Sync.State (
    getUIDSet,
    setUIDMapping,
    setSeen,
-   findReadElsewhere
+   findReadElsewhere,
+   getFirstUnread
 ) where
 
 import Database.HDBC
@@ -81,6 +82,24 @@ setSeen con validity uid seen = do
 
 boolToSql :: Bool -> SqlValue
 boolToSql seen = toSql $ if seen then (1::Int) else 0
+
+getFirstUnread :: Connection -> Int -> IO UID
+getFirstUnread con folderKey = do
+   result <- quickQuery con "select uid from idmap where folderKey=? and seen=0 \
+         \ order by uid limit 1" [toSql folderKey]
+   case result of
+      [] -> do
+         -- If there are no rows, then we should return '1' to start
+         -- with.  Otherwise, we should just return one past the
+         -- highest one we know about.
+         r2 <- quickQuery con "select uid from idmap where folderKey=? \
+               \ order by uid desc limit 1" [toSql folderKey]
+         return $ case r2 of
+            [] -> 1
+            [[a]] -> 1 + fromSql a
+            _ -> error "SQL returned multiple rows despite 'limit 1'"
+      [[a]] -> return $ fromSql a
+      _ -> error "SQL returned multiple rows despite 'limit 1'"
 
 -- The meat.  Returns pairs of folder name and the UID of any messages
 -- that have been marked as read in one folder but not in another.
