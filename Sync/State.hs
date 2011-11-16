@@ -10,7 +10,8 @@ module Sync.State (
    updateValidity,
    getUIDMap,
    setUIDMapping,
-   setSeen
+   setSeen,
+   findReadElsewhere
 ) where
 
 import Database.HDBC
@@ -70,3 +71,18 @@ setSeen con validity uid seen = do
 
 boolToSql :: Bool -> SqlValue
 boolToSql seen = toSql $ if seen then (1::Int) else 0
+
+-- The meat.  Returns pairs of folder name and the UID of any messages
+-- that have been marked as read in one folder but not in another.
+findReadElsewhere :: Connection -> IO [(String, UID)]
+findReadElsewhere con = do
+   result <- quickQuery con "select folders.name, aa.uid\
+               \ from idmap as aa \
+               \ inner join idmap as bb \
+               \   on aa.messageid == bb.messageid \
+               \ inner join folders \
+               \   on folders.key == aa.folderKey \
+               \ where aa.validity != bb.validity \
+               \   and aa.seen = 0 and bb.seen = 1 \
+               \ order by aa.folderKey, aa.uid" []
+   return $ map (\ [a, b] -> (fromSql a, fromSql b)) result

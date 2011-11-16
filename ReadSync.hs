@@ -7,7 +7,7 @@ import Text.IMAPParsers (UID)
 
 import Control.Monad
 import qualified Data.ByteString.Char8 as B8
-import Data.List (intercalate, isInfixOf, partition)
+import Data.List (groupBy, intercalate, isInfixOf, partition)
 import Data.Maybe (fromJust)
 import qualified Data.Map as Map
 import System.IO (hFlush, stdout)
@@ -27,8 +27,24 @@ main = do
    S.withTransaction db $ \db -> do
       putStrLn $ "Pass 1: Scanning " ++ (show $ length folders) ++ " folders"
       forM_ folders $ scanFolder db imap
+      updates <- S.findReadElsewhere db
+      putStrLn $ "Pass 2: Marking " ++ show (length updates) ++ " messages as read"
+      markRead imap updates
+
    S.disconnect db
    logout imap
+
+markRead :: BSStream s => IMAPConnection s -> [(String, UID)] -> IO ()
+markRead imap updates = do
+   forM_ (groupBy (\ (a, _) (b, _) -> a == b) updates) $ \upd2 -> do
+      let folder = fst $ head upd2
+      let ids = map snd upd2
+      putStrLn $ "Updating " ++ folder ++ " (" ++ show (length ids) ++ " messages)"
+      select imap folder
+      forM_ ids $ \i -> do
+         -- putStrLn $ "  " ++ show i
+         store imap i (PlusFlags [Seen])
+      close imap
 
 -- The mime library needs a way to just parse headers, not entire mime
 -- messages.
@@ -59,6 +75,8 @@ scanFolder db imap (folderKey, name, startUID) = do
 
    -- Update the seen state of the messages we have seen.
    mapM_ (\ (u, s) -> S.setSeen db validity u s) present
+
+   close imap
 
 -- Fetch all of the messages and seen flags.
 fetchSeens :: BSStream s => IMAPConnection s -> IO [(UID, Bool)]
