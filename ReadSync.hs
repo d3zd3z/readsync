@@ -48,7 +48,8 @@ scanFolder db imap (name, startUID) = do
 
    uidMap <- S.getUIDMap db validity
    let missingIDs = filter (\k -> Map.notMember k uidMap) $ map fst seens
-   putStrLn $ "    Updating " ++ (show $ length missingIDs) ++ " message ids"
+   when (missingIDs /= []) $
+      putStrLn $ "    Updating " ++ (show $ length missingIDs) ++ " message ids"
    mids <- fetchMessageIDs imap missingIDs
    mapM_ (uncurry $ S.setUIDMapping db validity) $ zip missingIDs mids
 
@@ -56,10 +57,18 @@ scanFolder db imap (name, startUID) = do
 fetchSeens :: BSStream s => IMAPConnection s -> IO [(UID, Bool)]
 fetchSeens imap = do
    lastUid <- uidNext imap
-   flags <- fetchByStringR imap (1, lastUid-1) "(UID FLAGS)"
-   return $ map (\ (a, b) -> (a, decodeSeen b)) flags
+
+   flagGroups <- forM (chopList 1000 [1 .. lastUid-1]) $ \group -> do
+      let query = intercalate "," $ groupUIDs group
+      flags <- fetchByStringT imap query "(UID FLAGS)"
+      return $ map (\ (a, b) -> (a, decodeSeen b)) flags
+   return $ concat flagGroups
+
    where
       decodeSeen :: [(String, String)] -> Bool
+      -- I suspect this isInfixOf is where much of the time is being
+      -- spent.  It might be better to use ByteStrings instead of
+      -- Strings for the results, since they can be scanned faster.
       decodeSeen = ("\\Seen" `isInfixOf`) . fromJust . lookup "FLAGS"
 
 fetchMessageIDs :: BSStream s => IMAPConnection s -> [UID] -> IO [String]
