@@ -10,6 +10,7 @@ import qualified Data.ByteString.Char8 as B8
 import Data.List (isInfixOf)
 import Data.Maybe (fromJust)
 import qualified Data.Map as Map
+import System.IO (hFlush, stdout)
 
 import qualified Sync.State as S
 
@@ -53,7 +54,7 @@ scanFolder db imap (name, startUID) = do
    uidMap <- S.getUIDMap db validity
    let missingIDs = filter (\k -> Map.notMember k uidMap) $ map fst seens
    putStrLn $ "    Updating " ++ (show $ length missingIDs) ++ " message ids"
-   mids <- mapM (askMessageID imap) missingIDs
+   mids <- zipWithM (askMessageID imap) [1..] missingIDs
    mapM_ (uncurry $ S.setUIDMapping db validity) $ zip missingIDs mids
 
 -- Fetch all of the messages and seen flags.
@@ -69,12 +70,14 @@ fetchSeens imap = do
 -- This is very slow, because it does a round-trip to the server for
 -- each unknown id.  It's probably usable in normal situations when
 -- run frequently, but will be very painful on the first run.
-askMessageID :: BSStream s => IMAPConnection s -> UID -> IO String
-askMessageID imap uid = do
-   fields <- fetchByString imap uid "BODY.PEEK[HEADER]"
-   let Just header = lookup "BODY[HEADER]" fields
+askMessageID :: BSStream s => IMAPConnection s -> Int -> UID -> IO String
+askMessageID imap index uid = do
+   putStr $ show index ++ "\r"
+   hFlush stdout
+   fields <- fetchByString imap uid "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]"
+   let Just header = lookup "BODY[HEADER.FIELDS (MESSAGE-ID)]" fields
    let msg = M.message (B8.pack $ header ++ "empty\r\n")
-   return $ getMessageId msg
+   return $! getMessageId msg
 
 scanBox :: BSStream s => IMAPConnection s -> String -> IO ()
 scanBox con box = do
