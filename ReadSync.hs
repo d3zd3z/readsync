@@ -7,7 +7,7 @@ import Text.IMAPParsers (UID)
 
 import Control.Monad
 import qualified Data.ByteString.Char8 as B8
-import Data.List (isInfixOf)
+import Data.List (intercalate, isInfixOf)
 import Data.Maybe (fromJust)
 import qualified Data.Map as Map
 import System.IO (hFlush, stdout)
@@ -27,14 +27,9 @@ main = do
    S.withTransaction db $ \db -> do
       putStrLn $ "Pass 1: Scanning " ++ (show $ length folders) ++ " folders"
       forM_ folders $ scanFolder db imap
+   S.disconnect db
+   logout imap
 
--- Note that the parsing lib is incorrect, and won't properly parse
--- fetch results that contain a space.  This means that we have to
--- fetch all of the headers, even if we only want one.
--- TODO: Fix the parser in HaskellNet.
--- To compensate, concatenate an empty message body, and use the
--- partial mime parser.
---
 -- The mime library needs a way to just parse headers, not entire mime
 -- messages.
 
@@ -54,7 +49,7 @@ scanFolder db imap (name, startUID) = do
    uidMap <- S.getUIDMap db validity
    let missingIDs = filter (\k -> Map.notMember k uidMap) $ map fst seens
    putStrLn $ "    Updating " ++ (show $ length missingIDs) ++ " message ids"
-   mids <- zipWithM (askMessageID imap) [1..] missingIDs
+   mids <- fetchMessageIDs imap missingIDs
    mapM_ (uncurry $ S.setUIDMapping db validity) $ zip missingIDs mids
 
 -- Fetch all of the messages and seen flags.
@@ -67,37 +62,25 @@ fetchSeens imap = do
       decodeSeen :: [(String, String)] -> Bool
       decodeSeen = ("\\Seen" `isInfixOf`) . fromJust . lookup "FLAGS"
 
--- This is very slow, because it does a round-trip to the server for
--- each unknown id.  It's probably usable in normal situations when
--- run frequently, but will be very painful on the first run.
-askMessageID :: BSStream s => IMAPConnection s -> Int -> UID -> IO String
-askMessageID imap index uid = do
-   putStr $ show index ++ "\r"
-   hFlush stdout
-   fields <- fetchByString imap uid "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]"
-   let Just header = lookup "BODY[HEADER.FIELDS (MESSAGE-ID)]" fields
-   let msg = M.message (B8.pack $ header ++ "empty\r\n")
-   return $! getMessageId msg
+fetchMessageIDs :: BSStream s => IMAPConnection s -> [UID] -> IO [String]
+fetchMessageIDs imap uids = do
+   groups <- forM (zip (chopList 100 uids) [1, 101..]) $ \(group, idx) -> do
+      putStr $ show idx ++ "-" ++ show (idx + 99) ++ "\r"
+      hFlush stdout
+      let query = intercalate "," $ groupUIDs group
+      answer <- fetchByStringT imap query "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]"
+      forM (zip group answer) $ \ (uid, (altID, fields)) -> do
+         when (uid /= altID) $ error "ID message in IMAP FETCH"
+         let Just header = lookup "BODY[HEADER.FIELDS (MESSAGE-ID)]" fields
+         let msg = M.message (B8.pack $ header ++ "empty\r\n")
+         return $! getMessageId msg
+   return $ concat groups
 
-scanBox :: BSStream s => IMAPConnection s -> String -> IO ()
-scanBox con box = do
-   select con box
-   validity <- uidValidity con
-   lastUid <- uidNext con
-   putStrLn $ show validity
-   putStrLn $ show lastUid
-   -- info <- fetchByStringR con (1, lastUid-1) "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
-   -- info <- fetchByStringR con (1, 2) "(BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])"
-   -- info <- fetchByStringR con (1, 2) "(UID BODY.PEEK[HEADER.FIELDS (DATE)])"
-   info <- fetchByStringR con (1, lastUid-1) "(BODY.PEEK[HEADER])"
-   forM info $ \(uid, fields) -> do
-      let Just header = lookup "BODY[HEADER]" fields
-      let msg = M.message (B8.pack $ header ++ "empty\r\n")
-      let msgId = getMessageId msg
-      putStrLn $ show uid ++ ": " ++ show msgId
-   -- item <- fetchHeaderFields con 4295 ["(MESSAGE-ID)"]
-   -- putStrLn $ show item
-   close con
+chopList :: Int -> [a] -> [[a]]
+chopList n [] = []
+chopList n l =
+   let (pre, post) = splitAt n l in
+   pre : chopList n post
 
 -- The mime parser canonicalizes the case of the headers.
 getMessageId :: M.Message -> String
@@ -107,3 +90,20 @@ getMessageId m = case lookup "Message-Id" $ getHeader m of
 
 getHeader :: M.Message -> [M.Header]
 getHeader (h, _) = h
+
+-- Convert a sorted list of UID's into groups appropriate for
+-- concatenating with ',' into queries for fetch.
+groupUIDs :: [UID] -> [String]
+groupUIDs [] = []
+groupUIDs (a:as) = subGroup (a, a) as
+
+subGroup :: (UID, UID) -> [UID] -> [String]
+subGroup (l, h) aa@(a:as)
+   | a == h+1 = subGroup (l, a) as
+   | otherwise = groupDecode (l, h) : groupUIDs aa
+subGroup grp [] = [groupDecode grp]
+
+groupDecode :: (UID, UID) -> String
+groupDecode (a, b)
+   | a == b = show a
+   | otherwise = show a ++ ":" ++ show b
