@@ -7,7 +7,7 @@ import Text.IMAPParsers (UID)
 
 import Control.Monad
 import qualified Data.ByteString.Char8 as B8
-import Data.List (intercalate, isInfixOf)
+import Data.List (intercalate, isInfixOf, partition)
 import Data.Maybe (fromJust)
 import qualified Data.Map as Map
 import System.IO (hFlush, stdout)
@@ -33,8 +33,8 @@ main = do
 -- The mime library needs a way to just parse headers, not entire mime
 -- messages.
 
-scanFolder :: BSStream s => S.Connection -> IMAPConnection s -> (String, UID) -> IO ()
-scanFolder db imap (name, startUID) = do
+scanFolder :: BSStream s => S.Connection -> IMAPConnection s -> (Int, String, UID) -> IO ()
+scanFolder db imap (folderKey, name, startUID) = do
    putStrLn $ "  " ++ name
    select imap name
    validity <- uidValidity imap
@@ -47,11 +47,18 @@ scanFolder db imap (name, startUID) = do
    --    putStrLn $ show seen
 
    uidMap <- S.getUIDMap db validity
-   let missingIDs = filter (\k -> Map.notMember k uidMap) $ map fst seens
+   let (present, missing) = partition (\ (k, _) -> Map.member k uidMap) seens
+   let missingIDs = map fst missing
+   let missingSeens = map snd missing
    when (missingIDs /= []) $
       putStrLn $ "    Updating " ++ (show $ length missingIDs) ++ " message ids"
    mids <- fetchMessageIDs imap missingIDs
-   mapM_ (uncurry $ S.setUIDMapping db validity) $ zip missingIDs mids
+
+   -- Write out the new UIDs that we haven't seen before.
+   mapM_ (\ (u, m, s) -> S.setUIDMapping db folderKey validity u m s) $ zip3 missingIDs mids missingSeens
+
+   -- Update the seen state of the messages we have seen.
+   mapM_ (\ (u, s) -> S.setSeen db validity u s) present
 
 -- Fetch all of the messages and seen flags.
 fetchSeens :: BSStream s => IMAPConnection s -> IO [(UID, Bool)]

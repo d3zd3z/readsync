@@ -9,7 +9,8 @@ module Sync.State (
    getFolders,
    updateValidity,
    getUIDMap,
-   setUIDMapping
+   setUIDMapping,
+   setSeen
 ) where
 
 import Database.HDBC
@@ -33,10 +34,10 @@ serverInfo con = do
       (_:_:_) -> error "server table has multiple rows"
       _ -> error "Database doesn't have a proper server table."
 
-getFolders :: Connection -> IO [(String, UID)]
+getFolders :: Connection -> IO [(Int, String, UID)]
 getFolders con = do
-   result <- quickQuery con "select * from folders" []
-   return $ map (\ [a, b] -> (fromSql a, fromSql b)) result
+   result <- quickQuery con "select key, name, validity from folders" []
+   return $ map (\ [a, b, c] -> (fromSql a, fromSql b, fromSql c)) result
 
 updateValidity :: Connection -> String -> UID -> IO ()
 updateValidity con name validity = do
@@ -54,8 +55,18 @@ getUIDMap con validity = do
    let vals = map (\ [a, b] -> (fromSql a, fromSql b)) vals1
    return $ Map.fromList vals
 
-setUIDMapping :: Connection -> UID -> UID -> String -> IO ()
-setUIDMapping con validity uid mid = do
-   1 <- run con "insert or replace into idmap (validity, uid, messageid) values (?,?,?)"
-      [toSql validity, toSql uid, toSql mid]
+setUIDMapping :: Connection -> Int -> UID -> UID -> String -> Bool -> IO ()
+setUIDMapping con folderKey validity uid mid seen = do
+   1 <- run con "insert or replace into idmap (folderkey, validity, uid, messageid, seen) values (?,?,?,?,?)"
+      [toSql folderKey, toSql validity, toSql uid, toSql mid, boolToSql seen]
    return ()
+
+-- Set the seen value for a row that is present.
+setSeen :: Connection -> UID -> UID -> Bool -> IO ()
+setSeen con validity uid seen = do
+   1 <- run con "update idmap set seen=? where validity=? and uid=?"
+      [boolToSql seen, toSql validity, toSql uid]
+   return ()
+
+boolToSql :: Bool -> SqlValue
+boolToSql seen = toSql $ if seen then (1::Int) else 0
