@@ -42,7 +42,6 @@ markRead imap updates = do
       putStrLn $ "Updating " ++ folder ++ " (" ++ show (length ids) ++ " messages)"
       select imap folder
       forM_ ids $ \i -> do
-         -- putStrLn $ "  " ++ show i
          store imap i (PlusFlags [Seen])
       close imap
 
@@ -59,8 +58,6 @@ scanFolder db imap (folderKey, name, startUID) = do
 
    -- Get all of the flags.
    seens <- fetchSeens imap
-   -- forM_ seens $ \seen ->
-   --    putStrLn $ show seen
 
    uidSet <- S.getUIDSet db validity
    let (present, missing) = partition (\ (k, _) -> Set.member k uidSet) seens
