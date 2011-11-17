@@ -27,9 +27,14 @@ import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
 import Data.Set (Set)
+import System.Environment (getEnv)
+import System.FilePath ((</>))
 
 open :: IO Connection
-open = connectSqlite3 "rs-state.db"
+open = do
+   home <- getEnv "HOME"
+   let name = home </> ".readsync.db"
+   connectSqlite3 name
 
 serverInfo :: Connection -> IO (String, String, String)
 serverInfo con = do

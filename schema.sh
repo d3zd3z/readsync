@@ -1,6 +1,6 @@
 #! bin/sh
 
-DB=rs-state.db
+DB=${HOME}/.readsync.db
 
 readsecret()
 {
