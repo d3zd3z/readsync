@@ -1,4 +1,5 @@
 -- Sync State stored across multiple sessions.
+{-# LANGUAGE FlexibleContexts #-}
 
 module Sync.State (
    -- HDBC exports
@@ -20,9 +21,8 @@ import Database.HDBC
 import Database.HDBC.Sqlite3
 
 import Text.IMAPParsers (UID)
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Char8 as B8
 
+import Data.Convertible (Convertible)
 import qualified Data.Map as Map
 import Data.Map (Map)
 import qualified Data.Set as Set
@@ -47,11 +47,11 @@ serverInfo con = do
 getFolders :: Connection -> IO [(Int, String, UID)]
 getFolders con = do
    result <- quickQuery con "select key, name, validity from folders" []
-   return $ map (\ [a, b, c] -> (fromSql a, fromSql b, fromSql c)) result
+   return $ map fromSql3 result
 
 updateValidity :: Connection -> String -> UID -> IO ()
 updateValidity con name validity = do
-   [[oldValidity, key]] <- quickQuery con "select validity, key from folders where name=?"
+   [[key]] <- quickQuery con "select key from folders where name=?"
       [toSql name]
    1 <- run con "update folders set validity=? where name=?"
       [toSql validity, toSql name]
@@ -62,14 +62,14 @@ getUIDMap :: Connection -> Int -> IO (Map UID String)
 getUIDMap con folderKey = do
    vals1 <- quickQuery con "select uid, messageid from idmap where folderKey=?"
       [toSql folderKey]
-   let vals = map (\ [a, b] -> (fromSql a, fromSql b)) vals1
+   let vals = map fromSql2 vals1
    return $ Map.fromList vals
 
 getUIDSet :: Connection -> Int -> IO (Set UID)
 getUIDSet con folderKey = do
    vals1 <- quickQuery con "select uid from idmap where folderKey=?"
       [toSql folderKey]
-   let vals = map (\ [a] -> fromSql a) vals1
+   let vals = map fromSql1 vals1
    return $ Set.fromList vals
 
 setUIDMapping :: Connection -> Int -> UID -> String -> Bool -> IO ()
@@ -119,4 +119,25 @@ findReadElsewhere con = do
                \ where aa.folderKey != bb.folderKey \
                \   and aa.seen = 0 and bb.seen = 1 \
                \ order by aa.folderKey, aa.uid" []
-   return $ map (\ [a, b] -> (fromSql a, fromSql b)) result
+   return $ map fromSql2 result
+
+fromSql3 ::
+   Convertible SqlValue a =>
+   Convertible SqlValue b =>
+   Convertible SqlValue c =>
+   [SqlValue] -> (a, b, c)
+fromSql3 [a, b, c] = (fromSql a, fromSql b, fromSql c)
+fromSql3 _ = error "Expecting three values from sql query"
+
+fromSql2 ::
+   Convertible SqlValue a =>
+   Convertible SqlValue b =>
+   [SqlValue] -> (a, b)
+fromSql2 [a, b] = (fromSql a, fromSql b)
+fromSql2 _ = error "Expecting two values from sql query"
+
+fromSql1 ::
+   Convertible SqlValue a =>
+   [SqlValue] -> a
+fromSql1 [a] = (fromSql a)
+fromSql1 _ = error "Expecting one value from sql query"

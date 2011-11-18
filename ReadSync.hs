@@ -1,6 +1,7 @@
 module Main where
 
-import Network.HaskellNet.IMAP
+import qualified Network.HaskellNet.IMAP as I
+import Network.HaskellNet.IMAP (IMAPConnection)
 import Network.HaskellNet.BSStream
 import qualified Text.Mime as M
 import Text.IMAPParsers (UID)
@@ -21,11 +22,11 @@ main :: IO ()
 main = do
    db <- S.open
    (user, pass, imapServer) <- S.serverInfo db
-   imap <- connectIMAP imapServer
-   login imap user pass
+   imap <- I.connectIMAP imapServer
+   I.login imap user pass
    folders <- S.getFolders db
 
-   S.withTransaction db $ \db -> do
+   S.withTransaction db $ \_ -> do
       putStrLn $ "Pass 1: Scanning " ++ show (length folders) ++ " folders"
       forM_ folders $ scanFolder db imap
       updates <- S.findReadElsewhere db
@@ -33,7 +34,7 @@ main = do
       markRead imap updates
 
    S.disconnect db
-   logout imap
+   I.logout imap
 
 markRead :: BSStream s => IMAPConnection s -> [(String, UID)] -> IO ()
 markRead imap updates =
@@ -41,10 +42,10 @@ markRead imap updates =
       let folder = fst $ head upd2
       let ids = map snd upd2
       putStrLn $ "Updating " ++ folder ++ " (" ++ show (length ids) ++ " messages)"
-      select imap folder
+      I.select imap folder
       forM_ ids $ \i ->
-         store imap i (PlusFlags [Seen])
-      close imap
+         I.store imap i (I.PlusFlags [I.Seen])
+      I.close imap
 
 -- The mime library needs a way to just parse headers, not entire mime
 -- messages.
@@ -52,8 +53,8 @@ markRead imap updates =
 scanFolder :: BSStream s => S.Connection -> IMAPConnection s -> (Int, String, UID) -> IO ()
 scanFolder db imap (folderKey, name, startUID) = do
    putStrLn $ "  " ++ name
-   select imap name
-   validity <- uidValidity imap
+   I.select imap name
+   validity <- I.uidValidity imap
    when (validity /= startUID) $
       S.updateValidity db name validity
 
@@ -75,16 +76,16 @@ scanFolder db imap (folderKey, name, startUID) = do
    -- Update the seen state of the messages we have seen.
    mapM_ (uncurry (S.setSeen db folderKey)) present
 
-   close imap
+   I.close imap
 
 -- Fetch all of the messages and seen flags.
 fetchSeens :: BSStream s => IMAPConnection s -> UID -> IO [(UID, Bool)]
 fetchSeens imap firstUnread = do
-   lastUid <- uidNext imap
+   lastUid <- I.uidNext imap
 
    flagGroups <- forM (chopList 1000 [firstUnread .. lastUid-1]) $ \group -> do
       let query = intercalate "," $ groupUIDs group
-      flags <- fetchByStringT imap query "(UID FLAGS)"
+      flags <- I.fetchByStringT imap query "(UID FLAGS)"
       return $ map (second decodeSeen) flags
    return $ concat flagGroups
 
@@ -97,11 +98,11 @@ fetchSeens imap firstUnread = do
 
 fetchMessageIDs :: BSStream s => IMAPConnection s -> [UID] -> IO [String]
 fetchMessageIDs imap uids = do
-   groups <- forM (zip (chopList 100 uids) [1, 101..]) $ \(group, idx) -> do
+   groups <- forM (zip (chopList 100 uids) [1 :: Int, 101..]) $ \(group, idx) -> do
       putStr $ show idx ++ "-" ++ show (idx + 99) ++ "\r"
       hFlush stdout
       let query = intercalate "," $ groupUIDs group
-      answer <- fetchByStringT imap query "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]"
+      answer <- I.fetchByStringT imap query "BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)]"
       forM (zip group answer) $ \ (uid, (altID, fields)) -> do
          when (uid /= altID) $ error "ID message in IMAP FETCH"
          let Just header = lookup "BODY[HEADER.FIELDS (MESSAGE-ID)]" fields
@@ -110,7 +111,7 @@ fetchMessageIDs imap uids = do
    return $ concat groups
 
 chopList :: Int -> [a] -> [[a]]
-chopList n [] = []
+chopList _ [] = []
 chopList n l =
    let (pre, post) = splitAt n l in
    pre : chopList n post
