@@ -5,10 +5,11 @@ import Network.HaskellNet.BSStream
 import qualified Text.Mime as M
 import Text.IMAPParsers (UID)
 
+import Control.Arrow (second)
 import Control.Monad
 import qualified Data.ByteString.Char8 as B8
 import Data.List (groupBy, intercalate, isInfixOf, partition)
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 import qualified Data.Set as Set
 import System.IO (hFlush, stdout)
 
@@ -25,7 +26,7 @@ main = do
    folders <- S.getFolders db
 
    S.withTransaction db $ \db -> do
-      putStrLn $ "Pass 1: Scanning " ++ (show $ length folders) ++ " folders"
+      putStrLn $ "Pass 1: Scanning " ++ show (length folders) ++ " folders"
       forM_ folders $ scanFolder db imap
       updates <- S.findReadElsewhere db
       putStrLn $ "Pass 2: Marking " ++ show (length updates) ++ " messages as read"
@@ -35,13 +36,13 @@ main = do
    logout imap
 
 markRead :: BSStream s => IMAPConnection s -> [(String, UID)] -> IO ()
-markRead imap updates = do
+markRead imap updates =
    forM_ (groupBy (\ (a, _) (b, _) -> a == b) updates) $ \upd2 -> do
       let folder = fst $ head upd2
       let ids = map snd upd2
       putStrLn $ "Updating " ++ folder ++ " (" ++ show (length ids) ++ " messages)"
       select imap folder
-      forM_ ids $ \i -> do
+      forM_ ids $ \i ->
          store imap i (PlusFlags [Seen])
       close imap
 
@@ -53,7 +54,7 @@ scanFolder db imap (folderKey, name, startUID) = do
    putStrLn $ "  " ++ name
    select imap name
    validity <- uidValidity imap
-   when (validity /= startUID) $ do
+   when (validity /= startUID) $
       S.updateValidity db name validity
 
    -- Get all of the flags.
@@ -65,14 +66,14 @@ scanFolder db imap (folderKey, name, startUID) = do
    let missingIDs = map fst missing
    let missingSeens = map snd missing
    when (missingIDs /= []) $
-      putStrLn $ "    Updating " ++ (show $ length missingIDs) ++ " message ids"
+      putStrLn $ "    Updating " ++ show (length missingIDs) ++ " message ids"
    mids <- fetchMessageIDs imap missingIDs
 
    -- Write out the new UIDs that we haven't seen before.
    mapM_ (\ (u, m, s) -> S.setUIDMapping db folderKey u m s) $ zip3 missingIDs mids missingSeens
 
    -- Update the seen state of the messages we have seen.
-   mapM_ (\ (u, s) -> S.setSeen db folderKey u s) present
+   mapM_ (uncurry (S.setSeen db folderKey)) present
 
    close imap
 
@@ -84,7 +85,7 @@ fetchSeens imap firstUnread = do
    flagGroups <- forM (chopList 1000 [firstUnread .. lastUid-1]) $ \group -> do
       let query = intercalate "," $ groupUIDs group
       flags <- fetchByStringT imap query "(UID FLAGS)"
-      return $ map (\ (a, b) -> (a, decodeSeen b)) flags
+      return $ map (second decodeSeen) flags
    return $ concat flagGroups
 
    where
@@ -116,9 +117,9 @@ chopList n l =
 
 -- The mime parser canonicalizes the case of the headers.
 getMessageId :: M.Message -> String
-getMessageId m = case lookup "Message-Id" $ getHeader m of
-   Just x -> x
-   Nothing -> error "Message doesn't contain a message id"
+getMessageId m =
+   fromMaybe (error "Message doesn't contain a message id")
+      (lookup "Message-Id" $ getHeader m)
 
 getHeader :: M.Message -> [M.Header]
 getHeader (h, _) = h
